@@ -209,12 +209,13 @@ static const char *hex(char *str, uint8_t value) {
   return str;
 }
 
-static bool isEmpty(const uint8_t *data, uint8_t size) {
-  while (size--) {
-    if (*data++ != 0xFF)
-      return false;
+static uint8_t dataLength(const uint8_t *data, uint8_t size) {
+  while (size) {
+    if (data[size - 1] != 0xFF)
+      break;
+    --size;
   }
-  return true;
+  return size;
 }
 
 static void printPercent(uint8_t percent) {
@@ -313,24 +314,31 @@ static bool dumpEeprom(PGM_P fileName) {
 #else
     uint8_t data[HEX_PAGE_SIZE];
 #endif
-    uint8_t crc;
 
 #ifdef USE_HEAP
     data = new uint8_t[HEX_PAGE_SIZE];
     if (data) {
 #endif
       for (uint16_t addr = 0; addr < EEPROM_SIZE; addr += HEX_PAGE_SIZE) {
-        crc = 16 + (addr / 256) + (addr & 0xFF);
+        uint8_t len;
+
         for (uint8_t i = 0; i < HEX_PAGE_SIZE; ++i) {
           data[i] = ispReadEeprom(addr + i);
-          crc += data[i];
         }
-        if (! isEmpty(data, HEX_PAGE_SIZE)) {
-          f.print(F(":10"));
+        len = dataLength(data, HEX_PAGE_SIZE);
+        if (len) {
+          uint8_t crc;
+
+          crc = len + (addr / 256) + (addr & 0xFF);
+          for (uint8_t i = 0; i < len; ++i) {
+            crc += data[i];
+          }
+          f.print(':');
+          f.print(hex(name, len));
           f.print(hex(name, addr / 256));
           f.print(hex(name, addr));
           f.print(F("00"));
-          for (uint8_t i = 0; i < HEX_PAGE_SIZE; ++i) {
+          for (uint8_t i = 0; i < len; ++i) {
             f.print(hex(name, data[i]));
           }
           f.println(hex(name, 0 - crc));
@@ -435,33 +443,43 @@ static bool dumpFlash(PGM_P fileName) {
     uint8_t data[HEX_PAGE_SIZE];
 #endif
     uint16_t flashTail;
-    uint8_t crc;
+    uint8_t len;
 
 #ifdef USE_HEAP
     data = new uint8_t[HEX_PAGE_SIZE];
     if (data) {
 #endif
-      crc = ispReadHighFuseBits() & 0x06;
-      if (crc == 0x06)
-        flashTail = 0x3F00;
-      else if (crc == 0x04)
-        flashTail = 0x3E00;
-      else if (crc == 0x02)
-        flashTail = 0x3C00;
-      else // if (crc == 0x00)
-        flashTail = 0x3800;
+      len = ispReadHighFuseBits() & 0x07;
+      if (len & 0x01) // BOOTRST not set
+        flashTail = FLASH_SIZE;
+      else {
+        if (len == 0x06)
+          flashTail = 0x3F00;
+        else if (len == 0x04)
+          flashTail = 0x3E00;
+        else if (len == 0x02)
+          flashTail = 0x3C00;
+        else // if (len == 0x00)
+          flashTail = 0x3800;
+      }
       for (uint16_t addr = 0; addr < flashTail; addr += HEX_PAGE_SIZE) {
-        crc = 16 + (addr / 256) + (addr & 0xFF);
         for (uint8_t i = 0; i < HEX_PAGE_SIZE; ++i) {
           data[i] = ispReadFlash(addr + i);
-          crc += data[i];
         }
-        if (! isEmpty(data, HEX_PAGE_SIZE)) {
-          f.print(F(":10"));
+        len = dataLength(data, HEX_PAGE_SIZE);
+        if (len) {
+          uint8_t crc;
+
+          crc = len + (addr / 256) + (addr & 0xFF);
+          for (uint8_t i = 0; i < len; ++i) {
+            crc += data[i];
+          }
+          f.print(':');
+          f.print(hex(name, len));
           f.print(hex(name, addr / 256));
           f.print(hex(name, addr));
           f.print(F("00"));
-          for (uint8_t i = 0; i < HEX_PAGE_SIZE; ++i) {
+          for (uint8_t i = 0; i < len; ++i) {
             f.print(hex(name, data[i]));
           }
           f.println(hex(name, 0 - crc));
@@ -671,6 +689,7 @@ void loop() {
   digitalWrite(LED1_PIN, ! LED_LEVEL);
   digitalWrite(LED2_PIN, ! LED_LEVEL);
 //  Serial.flush();
+  SD.end();
   SPI.end();
   set_sleep_mode(SLEEP_MODE_PWR_DOWN);
   sleep_enable();
